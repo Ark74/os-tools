@@ -16,69 +16,114 @@ else
   echo "Let's start!"
 fi
 
-# Define upstream peer
-urel_orig=$(lsb_release -sc)
-if [ "$urel_orig" = "flidas" ]; then
-  urel="xenial"
-elif [ "$urel_orig" = "etiona" ]; then
-  urel="bionic"
-elif [ "$urel_orig" = "nabia" ]; then
-  urel="focal"
-else
-  urel="$(lsb_release -sc)"
+# Office use?
+while [[ "$OFFICE_USE" != "yes" && "$OFFICE_USE" != "no" ]]
+do
+    read -p "> Is this planned to be for office use: (yes or no)"$'\n' -r OFFICE_USE
+    if [ "$OFFICE_USE" = "no" ]; then
+        echo "Ok, some extra packages will be added."
+    elif [ "$OFFICE_USE" = "yes" ]; then
+        echo "Ok, we'll stick to the office related packages only."
+    fi
+done
+
+# External AppImages
+## Nextcloud
+while [[ "$NC_APPIMAGE" != "yes" && "$NC_APPIMAGE" != "no" ]]
+do
+    read -p "> Do you want to setup Nextcloud AppImage: (yes or no)"$'\n' -r NC_APPIMAGE
+    if [ "$NC_APPIMAGE" = "yes" ]; then
+        echo "Ok, Nextcloud AppImage will be added."
+    elif [ "$NC_APPIMAGE" = "no" ]; then
+        echo "Nextcloud AppImage won't be setup."
+    fi
+done
+
+DIST="$(lsb_release -sc)"
+rename_distro() {
+if [ "$DIST" = "$1" ]; then
+  DIST="$2"
 fi
+}
+#Trisquel distro renaming
+rename_distro flidas xenial
+rename_distro etiona bionic
+rename_distro nabia  focal
 
 # Functions
 install_bundle_packages() {
 for i in $1
-  do
-     if [ "$(dpkg-query -W -f='${Status}' $i 2>/dev/null | grep -c "ok installed")" == "1" ]; then
-     echo " > Package $i already installed."
-     else
-     echo " > Add package $i to the install list"
-     iPackages="$iPackages $i"
-     fi
- done
- echo "$iPackages"
- if [ -z "$iPackages" ]; then
-   echo "Nothing to install..."
- else
-   echo "Installing packages..."
-   sudo apt-get -y install $iPackages
- fi
+do
+  if [ "$(dpkg-query -W -f='${Status}' $i 2>/dev/null | grep -c "ok installed")" == "1" ]; then
+      echo " > Package $i already installed."
+  else
+      if [ -z "$(apt-cache madison $i 2>/dev/null)" ]; then
+          echo " > Package $i not available on repo."
+      else
+          echo " > Add package $i to the install list"
+          iPackages="$iPackages $i"
+      fi
+  fi
+done
+echo "$iPackages"
+if [ -z "$iPackages" ]; then
+  echo "Nothing to install..."
+else
+  echo "Installing packages..."
+  sudo apt-get -y install $iPackages
+fi
 }
 remove_bundle_packages() {
 for i in $1
-  do
-     if [ "$(dpkg-query -W -f='${Status}' $i 2>/dev/null | grep -c "ok installed")" == "0" ]; then
-     echo " > Package $i is not installed."
-     else
-     echo " > Add package $i to the remove list"
-     rPackages="$rPackages $i"
-     fi
- done
- echo "$rPackages"
- if [ "$(wc -w <<< $rPackages)" = "1" ]; then
-   echo "Nothing to remove..."
- else
-   echo "Removing packages..."
-   sudo apt-get -y remove $rPackages
- fi
+do
+  if [ "$(dpkg-query -W -f='${Status}' $i 2>/dev/null | grep -c "ok installed")" == "0" ]; then
+      echo " > Package $i is not installed."
+  else
+      echo " > Add package $i to the remove list"
+      rPackages="$rPackages $i"
+  fi
+done
+echo "$rPackages"
+if [ "$(wc -w <<< $rPackages)" = "0" ]; then
+    echo "Nothing to remove..."
+else
+    echo "Removing packages..."
+    sudo apt-get -y remove $rPackages
+fi
+}
+set_once() {
+if [ -z "$(awk '!/^ *#/ && NF {print}' "$2"|grep $(echo $1|awk -F '=' '{print$1}'))" ]; then
+  echo "Setting "$1" on "$2"..."
+  echo "$1" | sudo tee -a "$2"
+else
+  echo " \"$(echo $1|awk -F '=' '{print$1}')\" seems present, skipping setting this variable"
+fi
 }
 change_background() {
 if [ "$(lsb_release -si)" = "$1" ]; then
-	if [ -f "$2" ]; then
-	  gsettings set org.mate.background picture-filename "$2"
-	else
-	  echo "Check that your desired background file exists..."
-	fi
+    if [ -f "$2" ]; then
+      gsettings set org.mate.background picture-filename "$2"
+    else
+      echo "Check that your desired background file exists..."
+    fi
 fi
 }
+
+if [ "$DIST" = "bionic" ] || \
+   [ "$DIST" = "focal" ]; then
+    echo "OS: $(lsb_release -sd)"
+    echo "Good, this is a supported platform!"
+else
+    echo "OS: $(lsb_release -sd)"
+    echo "Sorry, this platform is not supported... exiting"
+    exit
+fi
+
 sudo apt-get update
 install_bundle_packages "curl \
-                        net-tools \
-                        ssh \
-                        wget"
+                         net-tools \
+                         ssh \
+                         wget"
 
 #Variables
 NC_AppImage_API_URL="https://api.github.com/repos/nextcloud/desktop/releases/latest"
@@ -114,23 +159,44 @@ HB_REPO="$(apt-cache policy | \
             awk '/handbrake/{print$2}' | \
             awk -F "/" 'NR==1{print$5}')"
 ##Custom locale
-lcl="$(env | grep LANGUAGE | awk -F ':' '{print $2}')"
+lcl="$(env|awk -F ':' '/LANGUAGE/{print$2}')"
 
 # == Setup ==
+echo "Remove discouraged packages from system..."
 remove_bundle_packages "celluloid \
+                        evolution \
                         pidgin \
                         snapd \
                         transmission-gtk \
                         viewnior"
 
+echo "Removing unused snap bits."
+if [ -d $HOME/snap ]; then
+  rm -rf $HOME/snap
+fi
+
 # Remove unnecesary locales
 if [ "$(lsb_release -si)" = "Trisquel" ]; then
-sudo apt-get -y remove "abrowser-locale-*[!(en|$lcl)]" \
-                        abrowser-locale-cs \
-                        abrowser-locale-de \
-                        abrowser-locale-he \
-                        abrowser-locale-nn \
-                        abrowser-locale-zh-hans 
+  abrowser_l10n="$(apt-cache search abrowser-locale|awk '{print$1}'|xargs)"
+  ab_l10n_array=( $abrowser_l10n )
+  for a in "${ab_l10n_array[@]}"; do
+      if [ "$(dpkg-query -W -f='${Status}' $a 2>/dev/null | grep -c "ok installed")" == "0" ]; then
+          echo " > Package $a is not installed.">/dev/null
+      elif  [ $a != abrowser-locale-$lcl ] && [ $a != abrowser-locale-en ]; then
+          echo " > Add package $a to the remove list"
+          rAbrowser="$rAbrowser $a"
+      else
+          echo "> Keeping $a..."
+      fi
+  done
+
+  if [ "$(wc -w <<< $rAbrowser)" = "0" ]; then
+      echo "Nothing to remove..."
+  else
+      echo "Removing abrowser locale packages..."
+      sudo apt-get -y remove $rAbrowser
+  fi
+#--
 sudo apt-get -y remove "icedove-locale-*[!(en|$lcl)]"
 sudo apt-get -y remove "libreoffice-l10n-*[!(en|$lcl)]"
 fi
@@ -144,7 +210,6 @@ fi
 install_bundle_packages "apt-file \
                          clementine \
                          cheese \
-                         evolution \
                          filezilla \
                          font-manager \
                          git \
@@ -152,7 +217,6 @@ install_bundle_packages "apt-file \
                          gnome-disk-utility \
                          gstreamer1.0-plugins-bad \
                          gthumb \
-                         inkscape \
                          kolourpaint4 \
                          mpv \
                          pdfarranger \
@@ -163,47 +227,51 @@ install_bundle_packages "apt-file \
                          unar \
                          vlc \
                          vokoscreen"
+sudo apt-file update
+
 #Devel env
-if [ "$devel-env" = "yes" ]; then
+if [ "$OFFICE_USE" = "no" ]; then
 install_bundle_packages "audacity \
                          bmon \
                          deluge \
                          exfalso \
                          geany \
-                         htop"
+                         htop \
+                         inkscape"
+
 sudo apt-get install -y --no-install-recommends texlive-extra-utils
 fi
-sudo apt-file update
 
 # Install custom software
 ## - libreoffice
-if [ -z "$LIBO_REPO" ]; then
+if [ "$(lsb_release -si)" = "Ubuntu" ] && [ -z "$LIBO_REPO" ]; then
 echo "Installing LibreOffice Fresh"
     sudo apt-key adv -q --keyserver keyserver.ubuntu.com --recv-keys "$gpg_libo"
-    echo "deb http://ppa.launchpad.net/libreoffice/ppa/ubuntu ${urel} main
-deb-src http://ppa.launchpad.net/libreoffice/ppa/ubuntu ${urel} main" | \
+    echo "deb http://ppa.launchpad.net/libreoffice/ppa/ubuntu ${DIST} main
+deb-src http://ppa.launchpad.net/libreoffice/ppa/ubuntu ${DIST} main" | \
     sudo tee /etc/apt/sources.list.d/libo-fresh.list
 fi
     sudo apt-get update -q2
     rm -rf $HOME/.config/libreoffice/
     sudo apt-get -yq install libreoffice
+
 ## - mpv
 if [ -z "$MPV_REPO" ]; then
 echo "Installing MPV PPA"
     sudo apt-key adv -q --keyserver keyserver.ubuntu.com --recv-keys "$gpg_mpv"
-    echo "deb http://ppa.launchpad.net/mc3man/mpv-tests/ubuntu ${urel} main
-deb-src http://ppa.launchpad.net/mc3man/mpv-tests/ubuntu ${urel} main" | \
+    echo "deb http://ppa.launchpad.net/mc3man/mpv-tests/ubuntu ${DIST} main
+deb-src http://ppa.launchpad.net/mc3man/mpv-tests/ubuntu ${DIST} main" | \
     sudo tee /etc/apt/sources.list.d/mpv-ppa.list
 fi
     sudo apt-get update -q2
     sudo apt-get -yq install mpv
 
 # - handbreak
-if [ "$(lsb_release -si)" = "Ubuntu" && -z "$HB_REPO" ]; then
+if [ "$(lsb_release -si)" = "Ubuntu" ] && [ -z "$HB_REPO" ]; then
 echo "Installing Handbreak PPA"
-	sudo apt-key adv -q --keyserver keyserver.ubuntu.com --recv-keys $gpg_hb
-	echo "deb http://ppa.launchpad.net/stebbins/handbrake-releases/ubuntu $urel main
-deb-src http://ppa.launchpad.net/stebbins/handbrake-releases/ubuntu $urel main" | \
+    sudo apt-key adv -q --keyserver keyserver.ubuntu.com --recv-keys "$gpg_hb"
+    echo "deb http://ppa.launchpad.net/stebbins/handbrake-releases/ubuntu $DIST main
+deb-src http://ppa.launchpad.net/stebbins/handbrake-releases/ubuntu $DIST main" | \
     sudo tee /etc/apt/sources.list.d/hb-ppa.list
 fi
   sudo apt-get update -q2
@@ -226,9 +294,6 @@ else
     fi
 fi
 
-sudo apt-get -y install libdvd-pkg
-sudo dpkg-reconfigure libdvd-pkg
-
 # Further customization
 ## Hardcode Terminator
 if [ "$(mate-terminal -v 2>/dev/null | grep -c "terminator")" == "1" ]; then
@@ -240,38 +305,40 @@ fi
 
 ## inotify_watch 2^18 (default 8192)
 sudo sysctl -w fs.inotify.max_user_watches=262144
-if [ "$(grep -c "max_user_watches=262144" /etc/sysctl.conf)" = "0" ]; then
-  echo 'fs.inotify.max_user_watches=262144' | sudo tee -a /etc/sysctl.conf
-else
-  echo "iNotify already set."
-fi
+set_once "fs.inotify.max_user_watches=262144" "/etc/sysctl.conf"
 
 # AI binaries
 ## Nextcloud
-if [ ! -f $HOME/AI/$NCAppImageBIN ];then
-  echo "Setting Nextcloud AppImage"
-  mkdir ~/AI
-  cd ~/AI
-  wget -cP /tmp $NC_ASC
-  wget -c $NCAppImageDL
-  if [ $(lsb_release -sc) = "focal" ] || \
-     [ $(lsb_release -sc) = "nabia" ]; then
-    nc_fpr="$(gpg --show-keys /tmp/nextcloud.asc|awk '!/[psub]/{print$1}'|awk NF)"
-  elif [ $(lsb_release -sc) = "bionic" ] || \
-       [ $(lsb_release -sc) = "etiona" ]; then
-    nc_fpr="$(gpg 2>/dev/null /tmp/nextcloud.asc|awk '!/[psub]/{print$1}'|awk NF)"
-  fi
-  gpg --import /tmp/nextcloud.asc
-  echo -e "5\ny\n" |  gpg --command-fd 0 --expert --edit-key $nc_fpr trust
-  gpg --verify $NCAppImageASC $NCAppImageBIN
+if [ "$NC_APPIMAGE" = "yes" ]; then
+    if [ ! -f $HOME/AI/$NCAppImageBIN ];then
+      echo "Setting Nextcloud AppImage"
+      mkdir ~/AI
+      cd ~/AI
+      wget -cP /tmp $NC_ASC
+      wget -c $NCAppImageDL
+      if [ "$(lsb_release -sc)" = "focal" ] || \
+         [ "$(lsb_release -sc)" = "nabia" ]; then
+        nc_fpr="$(gpg --show-keys /tmp/nextcloud.asc|awk '!/[psub]/{print$1}'|awk NF)"
+      elif [ "$(lsb_release -sc)" = "bionic" ] || \
+           [ "$(lsb_release -sc)" = "etiona" ]; then
+        nc_fpr="$(gpg 2>/dev/null /tmp/nextcloud.asc|awk '!/[psub]/{print$1}'|awk NF)"
+      fi
+      gpg --import /tmp/nextcloud.asc
+      echo -e "5\ny\n" |  gpg --command-fd 0 --expert --edit-key $nc_fpr trust
 
-  chmod +x $NCAppImageBIN
-  rm /tmp/nextcloud.asc
-  rm $NCAppImageASC
-else
-  echo "Nextcloud AppImage seems already there, skiping..."
+    echo "
+    |------------------ Checking Nextcloud AI client GPG Signature ------------------|"
+    gpg --verify $NCAppImageASC $NCAppImageBIN
+    echo "    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |--------------------------------------------------------------------------------|
+    "
+      chmod +x $NCAppImageBIN
+      rm /tmp/nextcloud.asc
+      rm $NCAppImageASC
+    else
+      echo "Nextcloud AppImage seems already there, skiping..."
+    fi
 fi
-
 #Change background
 change_background Ubuntu /usr/share/backgrounds/ubuntu-mate-photos/sebastian-muller-52.jpg
 change_background Trisquel /usr/share/backgrounds/belenos3.png
