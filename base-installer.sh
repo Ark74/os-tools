@@ -39,6 +39,15 @@ do
     fi
 done
 
+wait_seconds() {
+secs=$(($1))
+while [ $secs -gt 0 ]; do
+   echo -ne "$secs\033[0K\r"
+   sleep 1
+   : $((secs--))
+done
+}
+
 DIST="$(lsb_release -sc)"
 rename_distro() {
 if [ "$DIST" = "$1" ]; then
@@ -133,6 +142,10 @@ NCAppImageDL="$(curl -s $NC_AppImage_API_URL | \
                 tr -d \")"
 NCAppImageBIN="$(awk '!/asc/{print}' <<< $NCAppImageDL|xargs basename)"
 NCAppImageASC="$(awk '/asc/{print}' <<< $NCAppImageDL|xargs basename)"
+KDENLIVE_LATEST_APPIMAGE="$(curl -s https://kdenlive.org/en/download/ | \
+                            awk '/.appimage/{print}'| \
+                            awk -F '[= "]' '{print$12}')"
+KDENLIVE_BIN="$(echo $KDENLIVE_LATEST_APPIMAGE|xargs basename)"
 
 gpg_libo="$(curl -s https://launchpad.net/~libreoffice/+archive/ubuntu/ppa | \
             grep 1024R| \
@@ -142,7 +155,11 @@ gpg_mpv="$(curl -s https://launchpad.net/~mc3man/+archive/ubuntu/mpv-tests | \
            grep 1024R| \
            awk -F'[/<]' '{print$3}' | \
            tail -c 9)"
-gpg_hb="$(curl -s https://launchpad.net/~stebbins/+archive/ubuntu/handbrake-releases | 
+gpg_hb="$(curl -s https://launchpad.net/~stebbins/+archive/ubuntu/handbrake-releases | \
+          grep 1024R| \
+          awk -F'[/<]' '{print$3}' | \
+          tail -c 9)"
+gpg_x2go="$(curl -s https://launchpad.net/~x2go/+archive/ubuntu/stable | \
           grep 1024R| \
           awk -F'[/<]' '{print$3}' | \
           tail -c 9)"
@@ -158,8 +175,13 @@ MPV_REPO="$(apt-cache policy | \
 HB_REPO="$(apt-cache policy | \
             awk '/handbrake/{print$2}' | \
             awk -F "/" 'NR==1{print$5}')"
+X2GO_REPO="$(apt-cache policy | \
+            awk '/x2go/{print$2}' | \
+            awk -F "/" 'NR==1{print$5}')"
+
 ##Custom locale
 lcl="$(env|awk -F ':' '/LANGUAGE/{print$2}')"
+mfv-path="/usr/share/application/mate-font-viewer.desktop"
 
 # == Setup ==
 echo "Remove discouraged packages from system..."
@@ -237,7 +259,9 @@ install_bundle_packages "audacity \
                          exfalso \
                          geany \
                          htop \
-                         inkscape"
+                         inkscape \
+                         iperf \
+                         jq"
 
 sudo apt-get install -y --no-install-recommends texlive-extra-utils
 fi
@@ -254,6 +278,17 @@ fi
     sudo apt-get update -q2
     rm -rf $HOME/.config/libreoffice/
     sudo apt-get -yq install libreoffice
+
+## - x2go - desktopsharing
+if [ -z "$X2GO_REPO" ]; then
+echo "Installing x2go PPA"
+    sudo apt-key adv -q --keyserver keyserver.ubuntu.com --recv-keys "$gpg_x2go"
+    echo "deb http://ppa.launchpad.net/x2go/stable/ubuntu ${DIST} main
+deb-src http://ppa.launchpad.net/x2go/stable/ubuntu ${DIST} main" | \
+    sudo tee /etc/apt/sources.list.d/x2go.list
+fi
+    sudo apt-get update -q2
+    sudo apt-get -yq install x2goserver-desktopsharing x2goclient
 
 ## - mpv
 if [ -z "$MPV_REPO" ]; then
@@ -303,6 +338,11 @@ else
     sudo ln -s /usr/bin/terminator /usr/bin/mate-terminal
 fi
 
+# Disable mate-font-viewer
+if [ -f "$mfv-path" ]; then
+    mv $mfv-path ${mfv-path}-dpkg-original
+fi
+
 ## inotify_watch 2^18 (default 8192)
 sudo sysctl -w fs.inotify.max_user_watches=262144
 set_once "fs.inotify.max_user_watches=262144" "/etc/sysctl.conf"
@@ -339,6 +379,28 @@ if [ "$NC_APPIMAGE" = "yes" ]; then
       echo "Nextcloud AppImage seems already there, skiping..."
     fi
 fi
+
+## kdenlive
+if [ "$KDEN_APPIMAGE" = "yes" ]; then
+    if [ ! -f $HOME/AI/$KDENLIVE_BIN ];then
+      echo "Setting kdenlive AppImage"
+      mkdir ~/AI
+      cd ~/AI
+      wget -c $KDENLIVE_LATEST_APPIMAGE
+      wget -c $KDENLIVE_LATEST_APPIMAGE.sha256 -O SHA256SUMS
+      echo "
+|------------------ Checking kdelive AI client sha256 ------------------|"
+      sha256sum -c SHA256SUMS
+      echo "^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+|-----------------------------------------------------------------------|
+"
+      chmod +x $KDENLIVE_BIN
+      rm SHA256SUMS
+    else
+      echo "kdenlive AppImage seems already there, skiping..."
+    fi
+fi
+
 #Change background
 change_background Ubuntu /usr/share/backgrounds/ubuntu-mate-photos/sebastian-muller-52.jpg
 change_background Trisquel /usr/share/backgrounds/belenos3.png
@@ -348,3 +410,6 @@ sudo apt-get update -q2
 sudo apt-get -y dist-upgrade
 sudo apt-get -y autoremove
 sudo apt-get clean
+
+echo "Rebooting in..."
+wait_seconds 15
