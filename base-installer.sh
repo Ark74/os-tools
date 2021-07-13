@@ -29,12 +29,12 @@ done
 
 # External AppImages
 ## Nextcloud
-while [[ "$NC_APPIMAGE" != "yes" && "$NC_APPIMAGE" != "no" ]]
+while [[ "$NC_DESKTOP" != "yes" && "$NC_DESKTOP" != "no" ]]
 do
-    read -p "> Do you want to setup Nextcloud AppImage: (yes or no)"$'\n' -r NC_APPIMAGE
-    if [ "$NC_APPIMAGE" = "yes" ]; then
+    read -p "> Do you want to setup Nextcloud descktop client: (yes or no)"$'\n' -r NC_DESKTOP
+    if [ "$NC_DESKTOP" = "yes" ]; then
         echo "Ok, Nextcloud AppImage will be added."
-    elif [ "$NC_APPIMAGE" = "no" ]; then
+    elif [ "$NC_DESKTOP" = "no" ]; then
         echo "Nextcloud AppImage won't be setup."
     fi
 done
@@ -135,9 +135,9 @@ install_bundle_packages "curl \
                          wget"
 
 #Variables
-NC_AppImage_API_URL="https://api.github.com/repos/nextcloud/desktop/releases/latest"
+NC_DESKTOP_API_URL="https://api.github.com/repos/nextcloud/desktop/releases/latest"
 NC_ASC="https://nextcloud.com/nextcloud.asc"
-NCAppImageDL="$(curl -s $NC_AppImage_API_URL | \
+NCAppImageDL="$(curl -s $NC_DESKTOP_API_URL | \
                 awk '/browser_download_url/&&/AppImage/ {print$2}' | \
                 tr -d \")"
 NCAppImageBIN="$(awk '!/asc/{print}' <<< $NCAppImageDL|xargs basename)"
@@ -148,19 +148,23 @@ KDENLIVE_LATEST_APPIMAGE="$(curl -s https://kdenlive.org/en/download/ | \
 KDENLIVE_BIN="$(echo $KDENLIVE_LATEST_APPIMAGE|xargs basename)"
 
 gpg_libo="$(curl -s https://launchpad.net/~libreoffice/+archive/ubuntu/ppa | \
-            grep 1024R| \
+            grep R/| \
             awk -F'[/<]' '{print$3}' | \
             tail -c 9)"
 gpg_mpv="$(curl -s https://launchpad.net/~mc3man/+archive/ubuntu/mpv-tests | \
-           grep 1024R| \
+           grep R/| \
            awk -F'[/<]' '{print$3}' | \
            tail -c 9)"
 gpg_hb="$(curl -s https://launchpad.net/~stebbins/+archive/ubuntu/handbrake-releases | \
-          grep 1024R| \
+          grep R/| \
           awk -F'[/<]' '{print$3}' | \
           tail -c 9)"
 gpg_x2go="$(curl -s https://launchpad.net/~x2go/+archive/ubuntu/stable | \
-          grep 1024R| \
+          grep R/| \
+          awk -F'[/<]' '{print$3}' | \
+          tail -c 9)"
+gpg_ncloud="$(curl -s https://launchpad.net/~nextcloud-devs/+archive/ubuntu/client | \
+          grep R/| \
           awk -F'[/<]' '{print$3}' | \
           tail -c 9)"
 BACKPORTS="$(apt-cache policy | \
@@ -227,6 +231,7 @@ fi
 if [ -z $BACKPORTS ]; then
   sudo sed -i '/-backports/s|#deb|deb|g' /etc/apt/sources.list
   sudo sed -i '/-backports/s|# deb|deb|g' /etc/apt/sources.list
+  sudo apt-get update -q2
 fi
 
 install_bundle_packages "apt-file \
@@ -278,6 +283,19 @@ fi
     sudo apt-get update -q2
     rm -rf $HOME/.config/libreoffice/
     sudo apt-get -yq install libreoffice
+
+## - nextcloud - desktop client
+if [ "$NC_DESKTOP" = "yes" ] && [ "$(lsb_release -sc)" = "focal" ]; then
+    sudo apt-key adv -q --keyserver keyserver.ubuntu.com --recv-keys "$gpg_ncloud"
+    echo "deb http://ppa.launchpad.net/nextcloud-devs/client/ubuntu ${DIST} main
+deb-src http://ppa.launchpad.net/nextcloud-devs/client/ubuntu ${DIST} main" | \
+    sudo tee /etc/apt/sources.list.d/nextcloud-desktop.list
+    sudo apt-get update -q2
+    sudo apt-get -yq install nextcloud-desktop
+elif [ "$NC_DESKTOP" = "yes" ] && [ "$(lsb_release -sc)" = "nabia" ]; then
+    sudo apt-get -yq install nextcloud-desktop
+fi
+
 
 ## - x2go - desktopsharing
 if [ -z "$X2GO_REPO" ]; then
@@ -349,7 +367,7 @@ set_once "fs.inotify.max_user_watches=262144" "/etc/sysctl.conf"
 
 # AI binaries
 ## Nextcloud
-if [ "$NC_APPIMAGE" = "yes" ]; then
+if [ "$NC_DESKTOP" = "yes" ] && [ "$DIST" = "bionic" ]; then
     if [ ! -f $HOME/AI/$NCAppImageBIN ];then
       echo "Setting Nextcloud AppImage"
       mkdir ~/AI
